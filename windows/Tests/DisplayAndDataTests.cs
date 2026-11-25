@@ -124,7 +124,7 @@ public class DisplayAndDataTests
             Directory.CreateDirectory(Path.Combine(usual, "Parts", "abc"));
             File.WriteAllText(Path.Combine(usual, "settings.json"), "{\"a\":1}");
             File.WriteAllBytes(Path.Combine(usual, "Parts", "abc", "0.part"), new byte[100_000]);
-            DataLocation.Forget();
+            DataLocation.Forget(usual);
             Assert.Equal(usual, DataLocation.Current(usual));
             Assert.NotNull(DataLocation.Request(usual, "relative/path"));
             Assert.NotNull(DataLocation.Request(usual, Path.Combine(usual, "inside")));
@@ -150,6 +150,6 @@ public class DisplayAndDataTests
             Assert.True(File.Exists(Path.Combine(usual, "Parts", "abc", "0.part")));
             Assert.False(Directory.Exists(other));
         }
-        finally { DataLocation.Forget(); Directory.Delete(root, true); }
+        finally { DataLocation.Forget(usual); Directory.Delete(root, true); }
     }
 }

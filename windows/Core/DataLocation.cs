@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+
 namespace Nexonic.Core;
 
 /// <summary>
@@ -9,32 +11,38 @@ public static class DataLocation
 {
     public const string PointerName = "data-location.txt";
     public const string PendingName = "data-move.txt";
-    static string? cached;
+    static readonly StringComparison PathCompare = OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
+    static readonly StringComparer PathComparer = OperatingSystem.IsLinux() ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase;
+    static readonly ConcurrentDictionary<string, string> cached = new(PathComparer);
+
+    static string Key(string path) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
 
     public static string Current(string usual)
     {
-        if (cached != null) return cached;
+        var key = Key(usual);
+        if (cached.TryGetValue(key, out var found)) return found;
+        var resolved = usual;
         try
         {
             var pointer = Path.Combine(usual, PointerName);
             if (File.Exists(pointer) && File.ReadAllText(pointer).Trim() is { Length: > 0 } p && Path.IsPathFullyQualified(p) && Directory.Exists(p))
-                return cached = p;
+                resolved = p;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
-        return cached = usual;
+        return cached.GetOrAdd(key, resolved);
     }
 
-    public static void Forget() => cached = null;
+    public static void Forget() => cached.Clear();
+    public static void Forget(string usual) => cached.TryRemove(Key(usual), out _);
 
     /// <summary>Why a folder can't take the data, or null when it can.</summary>
     public static string? Problem(string target, string current)
     {
         if (string.IsNullOrWhiteSpace(target) || !Path.IsPathFullyQualified(target)) return "Choose a full folder path.";
-        var to = Path.TrimEndingDirectorySeparator(Path.GetFullPath(target));
-        var from = Path.TrimEndingDirectorySeparator(Path.GetFullPath(current));
-        var cmp = OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
-        if (string.Equals(to, from, cmp)) return "The data is already in this folder.";
-        if (to.StartsWith(from + Path.DirectorySeparatorChar, cmp) || from.StartsWith(to + Path.DirectorySeparatorChar, cmp))
+        var to = Key(target);
+        var from = Key(current);
+        if (string.Equals(to, from, PathCompare)) return "The data is already in this folder.";
+        if (to.StartsWith(from + Path.DirectorySeparatorChar, PathCompare) || from.StartsWith(to + Path.DirectorySeparatorChar, PathCompare))
             return "Choose a folder that is not inside the current data folder (or the other way round).";
         if (Directory.Exists(to) && Directory.EnumerateFileSystemEntries(to).Any(e => Path.GetFileName(e) is not (PointerName or PendingName)))
             return "Choose an empty folder.";
@@ -65,7 +73,7 @@ public static class DataLocation
         var target = Pending(usual);
         if (target == null) return null;
         CancelRequest(usual);
-        Forget();
+        Forget(usual);
         var from = Current(usual);
         if (Problem(target, from) is { } why) return why;
         var copied = new List<string>();
@@ -89,8 +97,7 @@ public static class DataLocation
             return "The data could not be moved: " + e.Message;
         }
         // Switch first, then remove the old copies (the pointer and an empty usual folder stay).
-        var samePlace = string.Equals(Path.GetFullPath(target).TrimEnd(Path.DirectorySeparatorChar),
-            Path.GetFullPath(usual).TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase);
+        var samePlace = string.Equals(Key(target), Key(usual), PathCompare);
         if (samePlace) File.Delete(Path.Combine(usual, PointerName));
         else File.WriteAllText(Path.Combine(usual, PointerName), Path.GetFullPath(target));
         foreach (var file in Directory.EnumerateFiles(from, "*", SearchOption.AllDirectories).ToList())
@@ -101,9 +108,9 @@ public static class DataLocation
         }
         foreach (var dir in Directory.EnumerateDirectories(from, "*", SearchOption.AllDirectories).OrderByDescending(d => d.Length))
             try { if (!Directory.EnumerateFileSystemEntries(dir).Any()) Directory.Delete(dir); } catch (IOException) { }
-        if (!string.Equals(from, usual, StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(Key(from), Key(usual), PathCompare))
             try { if (!Directory.EnumerateFileSystemEntries(from).Any()) Directory.Delete(from); } catch (IOException) { }
-        Forget();
+        Forget(usual);
         return null;
     }
 }

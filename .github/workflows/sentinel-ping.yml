@@ -30,6 +30,9 @@ jobs:
       - name: Start the bot
         env:
           GH_TOKEN: ${{ secrets.SENTINEL_DISPATCH_TOKEN }}
+          SENTINEL_REPO: ${{ github.repository_owner }}/nexonic-sentinel
         run: |
           if [ -z "$GH_TOKEN" ]; then echo "No SENTINEL_DISPATCH_TOKEN: the bot answers on its schedule."; exit 0; fi
-          gh workflow run sentinel.yml -R "${{ github.repository_owner }}/nexonic-sentinel" --ref main
+          if ! gh workflow run sentinel.yml -R "$SENTINEL_REPO" --ref main; then
+            echo "::warning::Could not dispatch sentinel.yml in $SENTINEL_REPO; update SENTINEL_DISPATCH_TOKEN with Actions read/write access on $SENTINEL_REPO. The bot still runs on its schedule."
+          fi
