@@ -1,6 +1,6 @@
-# Nexonic Download Manager 0.36.2
+# Nexonic Download Manager 0.36.3
 
-**Nexonic Download Manager is now published by Nexonic Technologies.** The app, its source code and its downloads have moved to [github.com/nexonic-technologies](https://github.com/nexonic-technologies), and its official website is [nexonictechnologies.com/project/ndm](https://nexonictechnologies.com/project/ndm/). The About window, installers, licence and help now name Nexonic Technologies, and every link points to the new home. Includes 0.36.1 (Mac About window and drag fixes).
+Fixes and reliability improvements across the Android, iOS, and Windows apps, including in-app browser navigation and media detection fixes, signed-in browser cookie/referrer forwarding with cross-origin protection, torrent/magnet routing in the browser, Android activity state retention, multi-stream video progress tracking, and Windows temporary folder cleanup.
 
 **Mac, first launch:** macOS says it *could not verify* the app because it's free and not sold through Apple. Click **Done**, open **System Settings → Privacy & Security**, click **Open Anyway**, then **Open Anyway** again and enter your Mac password. Only once; updates installed with **Update Now** open without a warning. [Pictures of each step](https://github.com/nexonic-technologies/nexonic-download-manager#first-launch-on-mac)
 
