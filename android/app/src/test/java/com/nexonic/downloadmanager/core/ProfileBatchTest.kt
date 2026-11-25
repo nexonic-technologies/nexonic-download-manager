@@ -40,7 +40,7 @@ class ProfileBatchTest {
         val opts = ProfileBatch.options(41, 60).toMap()
         assertEquals("100", opts["--playlist-end"])
         assertFalse(opts.containsKey("--cookies") || opts.containsKey("--username"))
-        val p = SavedProfile("i", "https://v.test/c", "C", "720", BatchFilter(keywords = "a"), 6, 0, "", setOf("k"))
+        val p = SavedProfile("i", "https://v.test/c", "C", "720", BatchFilter(from = 1_700_000_000_000L, to = 1_800_000_000_000L, keywords = "a"), 6, 0, "", setOf("k"))
         assertEquals(listOf(p), ProfileBatch.profilesFrom(ProfileBatch.profilesToJson(listOf(p))))
         assertTrue(p.due())
         assertFalse(p.copy(lastChecked = System.currentTimeMillis()).due())

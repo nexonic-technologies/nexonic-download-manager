@@ -51,6 +51,7 @@ import com.nexonic.downloadmanager.data.BookmarkStore
 import com.nexonic.downloadmanager.core.tr
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -92,6 +93,10 @@ fun BrowserScreen(browser: Browser, ui: UiState) {
     val focus = LocalFocusManager.current
 
     LaunchedEffect(url) { if (!editing) address = url }
+    DisposableEffect(browser) {
+        browser.resume()
+        onDispose { browser.pause() }
+    }
 
     Column(Modifier.fillMaxSize()) {
         Row(
@@ -117,7 +122,7 @@ fun BrowserScreen(browser: Browser, ui: UiState) {
             if (progress in 1..99) IconButton(onClick = { browser.stop() }) { Icon(Icons.Outlined.Close, tr("Stop")) }
             else IconButton(onClick = { browser.reload() }) { Icon(Icons.Outlined.Refresh, tr("Reload")) }
             IconButton(onClick = { showBookmarks = true }) {
-                Icon(if (saved) Icons.Outlined.Bookmark else Icons.Outlined.BookmarkBorder, "Bookmarks and home page")
+                Icon(if (saved) Icons.Outlined.Bookmark else Icons.Outlined.BookmarkBorder, tr("Bookmarks and home page"))
             }
         }
         if (progress in 1..99) LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth().height(2.dp))
@@ -128,21 +133,29 @@ fun BrowserScreen(browser: Browser, ui: UiState) {
                 factory = { (browser.view.parent as? ViewGroup)?.removeView(browser.view); browser.view },
                 modifier = Modifier.fillMaxSize(),
             )
-            if (com.nexonic.downloadmanager.core.VideoPages.isVideoPage(url)) {
-                // Video sites (YouTube, Facebook, Instagram…): the video engine saves the video playing on this page.
-                ExtendedFloatingActionButton(
-                    onClick = { ui.addText = url },
-                    icon = { Icon(Icons.Outlined.Download, null) },
-                    text = { Text(tr("Download this video")) },
+            val isVideoPage = com.nexonic.downloadmanager.core.VideoPages.isVideoPage(url)
+            if (isVideoPage || found.isNotEmpty()) {
+                Column(
                     modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
-                )
-            } else if (found.isNotEmpty()) {
-                ExtendedFloatingActionButton(
-                    onClick = { ui.showFound = true },
-                    icon = { Icon(Icons.Outlined.Download, null) },
-                    text = { Text("${found.size} found") },
-                    modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
-                )
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    if (found.isNotEmpty()) {
+                        ExtendedFloatingActionButton(
+                            onClick = { ui.showFound = true },
+                            icon = { Icon(Icons.Outlined.Download, null) },
+                            text = { Text("${found.size} found") },
+                        )
+                    }
+                    if (isVideoPage) {
+                        // Video sites (YouTube, Facebook, Instagram…): pass the page offer so WebView userAgent/referer/cookies are kept.
+                        ExtendedFloatingActionButton(
+                            onClick = { ui.addOffer = browser.offerFor(url) },
+                            icon = { Icon(Icons.Outlined.Download, null) },
+                            text = { Text(tr("Download this video")) },
+                        )
+                    }
+                }
             }
         }
     }
@@ -168,7 +181,7 @@ fun BrowserScreen(browser: Browser, ui: UiState) {
                     Text(tr("Home page"), fontWeight = FontWeight.Medium)
                 }
                 if (bookmarks.isEmpty()) Text(
-                    "No bookmarks yet. Open a page and choose Add this page.",
+                    tr("No bookmarks yet. Open a page and choose Add this page."),
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
                 )
@@ -181,7 +194,7 @@ fun BrowserScreen(browser: Browser, ui: UiState) {
                             Text(b.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
                             Text(displayAddress(b.url), maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        IconButton(onClick = { update(com.nexonic.downloadmanager.core.Bookmarks.remove(bookmarks, b.url)) }) { Icon(Icons.Outlined.Delete, "Remove ${b.title}") }
+                        IconButton(onClick = { update(com.nexonic.downloadmanager.core.Bookmarks.remove(bookmarks, b.url)) }) { Icon(Icons.Outlined.Delete, tr("Remove") + " ${b.title}") }
                     }
                 }
             }

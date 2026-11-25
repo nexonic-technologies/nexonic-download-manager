@@ -5,6 +5,8 @@ package com.nexonic.downloadmanager.ui
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
@@ -28,6 +30,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -35,11 +38,13 @@ import com.nexonic.downloadmanager.Tab
 import com.nexonic.downloadmanager.core.tr
 import com.nexonic.downloadmanager.UiState
 import com.nexonic.downloadmanager.browser.Browser
+import com.nexonic.downloadmanager.browser.BrowserRules
 import com.nexonic.downloadmanager.browser.Offer
 import com.nexonic.downloadmanager.core.DownloadRequest
 import com.nexonic.downloadmanager.core.Http
 import com.nexonic.downloadmanager.core.Playlists
 import com.nexonic.downloadmanager.core.Links
+import com.nexonic.downloadmanager.core.VideoPages
 import com.nexonic.downloadmanager.data.Downloads
 import com.nexonic.downloadmanager.data.NewDownload
 import com.nexonic.downloadmanager.data.Secrets
@@ -119,18 +124,22 @@ fun App(ui: UiState, browser: Browser) {
         if (ui.addTorrent == null) { ui.addTorrent = t; Downloads.feedTorrent.value = null }
     }
     ui.addTorrent?.let { source ->
-        TorrentSheet(source) { msg -> ui.addTorrent = null; if (msg != null) ui.message = msg }
+        key(source) {
+            TorrentSheet(source) { msg -> ui.addTorrent = null; if (msg != null) ui.message = msg }
+        }
     }
 
     if (ui.addOffer != null || ui.addText != null) {
-        AddDownloadSheet(
-            given = ui.addOffer,
-            text = ui.addText,
-            onDone = { msg ->
-                ui.addOffer = null; ui.addText = null
-                if (msg != null) ui.message = msg
-            },
-        )
+        key(ui.addOffer, ui.addText) {
+            AddDownloadSheet(
+                given = ui.addOffer,
+                text = ui.addText,
+                onDone = { msg ->
+                    ui.addOffer = null; ui.addText = null
+                    if (msg != null) ui.message = msg
+                },
+            )
+        }
     }
 
     ui.longPress?.let { (offer, image) ->
@@ -140,7 +149,11 @@ fun App(ui: UiState, browser: Browser) {
             title = { Text(tr(if (image) "Image" else "Link"), maxLines = 1) },
             text = { Text(offer.url, maxLines = 4) },
             confirmButton = {
-                TextButton(onClick = { ui.longPress = null; ui.addOffer = offer }) { Text(tr(if (image) "Download image" else "Download link")) }
+                TextButton(onClick = {
+                    ui.longPress = null
+                    if (BrowserRules.isTorrentDownload(offer.url, offer.mime)) ui.addTorrent = offer.url
+                    else ui.addOffer = offer
+                }) { Text(tr(if (image) "Download image" else "Download link")) }
             },
             dismissButton = {
                 TextButton(onClick = {
@@ -164,17 +177,27 @@ fun copy(context: Context, text: String) {
 
 /** Adds a browser download without asking (when "Ask before downloading" is off). */
 fun quickAdd(offer: Offer, message: (String) -> Unit) {
+    val main = Handler(Looper.getMainLooper())
     Thread {
+        val videoSite = VideoPages.isVideoSite(offer.url)
         val req = DownloadRequest(offer.url, offer.cookies, offer.referer, offer.userAgent)
-        val probe = runCatching { Http.probe(req) }.getOrNull()
+        val probe = if (videoSite) null else runCatching { Http.probe(req) }.getOrNull()
+        val isVideo = videoSite || VideoPages.isWebPage(probe?.contentType)
         Downloads.add(
             NewDownload(
-                url = offer.url, fileName = probe?.fileName ?: offer.fileName ?: "download", size = probe?.size ?: offer.size.takeIf { it >= 0 },
-                resumable = probe?.resumable ?: false, referer = offer.referer, userAgent = offer.userAgent,
-                secrets = Secrets(cookies = offer.cookies), mime = probe?.contentType ?: offer.mime, quality = offer.quality,
+                url = offer.url,
+                fileName = if (isVideo) VideoPages.AUTO_NAME else (probe?.fileName ?: offer.fileName ?: "download"),
+                size = if (isVideo) null else (probe?.size ?: offer.size.takeIf { it >= 0 }),
+                resumable = if (isVideo) false else (probe?.resumable ?: false),
+                referer = offer.referer,
+                userAgent = offer.userAgent,
+                secrets = Secrets(cookies = offer.cookies),
+                mime = if (isVideo) null else (probe?.contentType ?: offer.mime),
+                quality = offer.quality,
+                video = if (isVideo) VideoPages.best else null,
             ),
             startNow = true,
         )
+        main.post { message("Download started") }
     }.start()
-    message("Download started")
 }

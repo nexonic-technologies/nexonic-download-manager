@@ -74,9 +74,9 @@ object Appearance {
     var choice by androidx.compose.runtime.mutableStateOf("system")
     var scheme by androidx.compose.runtime.mutableStateOf("")
     var font by androidx.compose.runtime.mutableStateOf("system")
-    var textScale by androidx.compose.runtime.mutableStateOf(100)
+    var textScale by androidx.compose.runtime.mutableIntStateOf(100)
     /** Changes when the size, speed or date units change, so the list is drawn again. */
-    var units by androidx.compose.runtime.mutableStateOf(0)
+    var units by androidx.compose.runtime.mutableIntStateOf(0)
 }
 
 fun categoryColor(c: FileCategory): Color = when (c) {

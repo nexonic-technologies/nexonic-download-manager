@@ -150,6 +150,7 @@ object ProfileBatch {
         JSONObject().put("id", p.id).put("url", p.url).put("title", p.title).put("quality", p.quality).put("checkHours", p.checkHours)
             .put("lastChecked", p.lastChecked).put("lastResult", p.lastResult).put("seen", JSONArray(p.seen.toList()))
             .put("filter", JSONObject().put("keywords", p.filter.keywords).put("kind", p.filter.kind).put("max", p.filter.max)
+                .put("from", p.filter.from ?: JSONObject.NULL).put("to", p.filter.to ?: JSONObject.NULL)
                 .put("minSeconds", p.filter.minSeconds ?: JSONObject.NULL).put("maxSeconds", p.filter.maxSeconds ?: JSONObject.NULL))
     }).toString()
 
@@ -158,7 +159,10 @@ object ProfileBatch {
         (0 until a.length()).map { i ->
             val o = a.getJSONObject(i); val f = o.optJSONObject("filter") ?: JSONObject(); val seen = o.optJSONArray("seen") ?: JSONArray()
             SavedProfile(o.getString("id"), o.getString("url"), o.optString("title"), o.optString("quality", "best"),
-                BatchFilter(keywords = f.optString("keywords"), kind = f.optString("kind", "all"), max = f.optInt("max", DEFAULT_MAX),
+                BatchFilter(
+                    from = if (f.isNull("from")) null else f.optLong("from"),
+                    to = if (f.isNull("to")) null else f.optLong("to"),
+                    keywords = f.optString("keywords"), kind = f.optString("kind", "all"), max = f.optInt("max", DEFAULT_MAX),
                     minSeconds = if (f.isNull("minSeconds")) null else f.optInt("minSeconds"), maxSeconds = if (f.isNull("maxSeconds")) null else f.optInt("maxSeconds")),
                 o.optInt("checkHours"), o.optLong("lastChecked"), o.optString("lastResult"), (0 until seen.length()).map { seen.getString(it) }.toSet())
         }

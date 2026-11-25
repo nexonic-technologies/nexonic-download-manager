@@ -84,4 +84,13 @@ class VideoTest {
         assertEquals(null, sp2)
         assertEquals(null to null, VideoPages.parseProgress("[info] Downloading webpage"))
     }
+
+    @Test fun multiStreamProgressDoesNotResetOrDoubleCount() {
+        val tracker = VideoProgressTracker()
+        assertEquals(500L to 1000L, tracker.update(50f, 1000L))
+        assertEquals(1000L to 1000L, tracker.update(100f, 1000L))
+        // Audio pass restarts at 10% of 200B without resetting cumulative written bytes.
+        assertEquals(1020L to 1200L, tracker.update(10f, 200L))
+        assertEquals(1200L to 1200L, tracker.update(100f, 200L))
+    }
 }

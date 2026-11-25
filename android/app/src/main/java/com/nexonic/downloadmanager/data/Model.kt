@@ -30,6 +30,7 @@ data class DownloadItem(
     /** Video pages (YouTube, Facebook…): the yt-dlp format selector and the result's extension. */
     val videoFormat: String? = null,
     val videoExt: String? = null,
+    val videoAudio: Boolean = false,
     /** Set for torrents: the files chosen and what the engine last reported. */
     val torrent: com.nexonic.downloadmanager.torrent.TorrentInfo? = null,
 ) {
@@ -49,6 +50,7 @@ data class DownloadItem(
         contentUri?.let { put("contentUri", it) }; savedPath?.let { put("savedPath", it) }; quality?.let { put("quality", it) }
         put("resumable", resumable)
         videoFormat?.let { put("videoFormat", it) }; videoExt?.let { put("videoExt", it) }
+        if (videoAudio) put("videoAudio", true)
         torrent?.let { put("torrent", it.toJson()) }
         state?.let { s ->
             put("state", JSONObject().apply {
@@ -93,6 +95,7 @@ data class DownloadItem(
                 state = st,
                 videoFormat = o.optString("videoFormat").ifEmpty { null },
                 videoExt = o.optString("videoExt").ifEmpty { null },
+                videoAudio = o.optBoolean("videoAudio", false),
                 torrent = o.optJSONObject("torrent")?.let { runCatching { com.nexonic.downloadmanager.torrent.TorrentInfo.fromJson(it) }.getOrNull() },
             )
         }

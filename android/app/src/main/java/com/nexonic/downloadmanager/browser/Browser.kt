@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.webkit.CookieManager
@@ -38,11 +39,56 @@ data class Offer(
     val quality: String? = null,
 )
 
+/** Pure navigation and detection rules for [Browser], separated so they can be unit-tested on the JVM. */
+internal object BrowserRules {
+    enum class LinkAction { ALLOW_WEB, MAGNET, NEXONIC, IGNORE }
+
+    fun classifyNavigation(url: String): LinkAction {
+        val trimmed = url.trim()
+        val scheme = trimmed.substringBefore(':').lowercase()
+        return when {
+            (scheme == "http" || scheme == "https") && Links.isWebLink(trimmed) -> LinkAction.ALLOW_WEB
+            trimmed.startsWith("magnet:?", ignoreCase = true) -> LinkAction.MAGNET
+            scheme == "nexonic" -> LinkAction.NEXONIC
+            else -> LinkAction.IGNORE
+        }
+    }
+
+    fun isTorrentDownload(url: String, mime: String?): Boolean {
+        val m = mime?.substringBefore(';')?.trim()?.lowercase()
+        if (m == "application/x-bittorrent") return true
+        return Links.isWebLink(url) && FileNames.extensionOf(url) == "torrent"
+    }
+
+    fun pageKey(url: String): String = url.trim().substringBefore('#')
+
+    fun shouldRescanOnVisitedUpdate(lastPageKey: String, newUrl: String, isReload: Boolean): Boolean {
+        if (isReload) return false
+        val trimmed = newUrl.trim()
+        if (trimmed.isEmpty() || trimmed.equals("about:blank", ignoreCase = true)) return false
+        if (!Links.isWebLink(trimmed)) return false
+        return pageKey(trimmed) != lastPageKey
+    }
+
+    fun shouldCollectRequest(url: String, isForMainFrame: Boolean): Boolean =
+        !Media.isStream(url) && (Media.isMedia(url, null, -1) || (Media.looksDownloadable(url) && !isForMainFrame))
+
+    fun acceptScanItem(url: String, kind: String): Boolean =
+        if (kind == "Link") Media.looksDownloadable(url) && !Media.isStream(url)
+        else Links.isWebLink(url) && !Media.isStream(url)
+}
+
 /**
  * The built-in browser. It does what the desktop browser extension does: downloads go to Nexonic, and files and
- * videos on the page are listed so they can be saved. Streams (.m3u8) and copy-protected video are not offered.
+ * videos on the page are listed so they can be saved. Streams and copy-protected video are not offered.
  */
-class Browser(context: Context, private val onOffer: (Offer) -> Unit, private val onLongPress: (Offer, isImage: Boolean) -> Unit) {
+class Browser(
+    context: Context,
+    private val onOffer: (Offer) -> Unit,
+    private val onLongPress: (Offer, isImage: Boolean) -> Unit,
+    private val onTorrent: (String) -> Unit = {},
+    private val onNexonic: (List<String>) -> Unit = {},
+) {
     val url = MutableStateFlow("")
     val title = MutableStateFlow("")
     val progress = MutableStateFlow(0)
@@ -51,6 +97,9 @@ class Browser(context: Context, private val onOffer: (Offer) -> Unit, private va
     val found = MutableStateFlow<List<Found>>(emptyList())
     private val main = Handler(Looper.getMainLooper())
     private var started = false
+    @Volatile private var navGen = 0L
+    private var lastPageKey = ""
+    @Volatile private var destroyed = false
 
     @SuppressLint("SetJavaScriptEnabled")
     val view: WebView = WebView(context).apply {
@@ -69,45 +118,71 @@ class Browser(context: Context, private val onOffer: (Offer) -> Unit, private va
 
         webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                val u = request.url
-                val scheme = u.scheme?.lowercase()
-                // Only web pages load here; other links (mail, phone, app links) are ignored for safety.
-                return scheme != "http" && scheme != "https"
+                val raw = request.url.toString()
+                return when (BrowserRules.classifyNavigation(raw)) {
+                    BrowserRules.LinkAction.ALLOW_WEB -> false
+                    BrowserRules.LinkAction.MAGNET -> { onTorrent(raw); true }
+                    BrowserRules.LinkAction.NEXONIC -> {
+                        val links = Links.fromNexonicLink(raw)
+                        if (links.isNotEmpty()) onNexonic(links)
+                        true
+                    }
+                    BrowserRules.LinkAction.IGNORE -> true
+                }
             }
 
             override fun onPageStarted(view: WebView, u: String, favicon: Bitmap?) {
-                this@Browser.url.value = u
+                navGen++
+                val blank = u.equals("about:blank", ignoreCase = true)
+                lastPageKey = if (blank) "" else BrowserRules.pageKey(u)
+                this@Browser.url.value = if (blank) "" else u
+                this@Browser.title.value = ""
                 found.value = emptyList()
                 updateNav()
             }
 
             override fun onPageFinished(view: WebView, u: String) {
-                this@Browser.url.value = u
-                this@Browser.title.value = view.title.orEmpty()
+                val blank = u.equals("about:blank", ignoreCase = true)
+                lastPageKey = if (blank) "" else BrowserRules.pageKey(u)
+                this@Browser.url.value = if (blank) "" else u
+                this@Browser.title.value = if (blank) "" else view.title.orEmpty()
                 updateNav()
-                scan()
+                if (!blank) scan(navGen)
             }
 
             override fun doUpdateVisitedHistory(view: WebView, u: String, isReload: Boolean) {
-                this@Browser.url.value = u
+                val blank = u.equals("about:blank", ignoreCase = true)
+                this@Browser.url.value = if (blank) "" else u
                 updateNav()
+                if (BrowserRules.shouldRescanOnVisitedUpdate(lastPageKey, u, isReload)) {
+                    navGen++
+                    lastPageKey = BrowserRules.pageKey(u)
+                    found.value = emptyList()
+                    val g = navGen
+                    main.postDelayed({ if (!destroyed && g == navGen) scan(g) }, 600)
+                }
             }
 
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
                 // Only looks at addresses; nothing is changed or blocked.
                 val u = request.url.toString()
-                if (Media.isMedia(u, null, -1) || (Media.looksDownloadable(u) && !request.isForMainFrame)) {
-                    main.post { addFound(Found(u, FileNames.fromUrl(u), kindOf(u))) }
+                val g = navGen
+                if (BrowserRules.shouldCollectRequest(u, request.isForMainFrame)) {
+                    main.post { if (!destroyed && g == navGen) addFound(Found(u, FileNames.fromUrl(u), kindOf(u))) }
                 }
                 return null
             }
         }
         webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(view: WebView, newProgress: Int) { this@Browser.progress.value = newProgress }
-            override fun onReceivedTitle(view: WebView, t: String?) { this@Browser.title.value = t.orEmpty() }
+            override fun onReceivedTitle(view: WebView, t: String?) { this@Browser.title.value = if (this@Browser.url.value.isEmpty()) "" else t.orEmpty() }
         }
         setDownloadListener { u, userAgent, contentDisposition, mimetype, contentLength ->
             if (!Links.isWebLink(u)) return@setDownloadListener // blob: and data: stay in the page
+            if (BrowserRules.isTorrentDownload(u, mimetype)) {
+                onTorrent(u)
+                return@setDownloadListener
+            }
             onOffer(
                 Offer(
                     url = u,
@@ -160,7 +235,8 @@ class Browser(context: Context, private val onOffer: (Offer) -> Unit, private va
     }
 
     /** Finds video, audio and file links in the page (like the extension's content script). */
-    private fun scan() {
+    private fun scan(expectedGen: Long = navGen) {
+        if (destroyed || expectedGen != navGen) return
         val js = """
             (function(){
               var out=[];
@@ -175,6 +251,7 @@ class Browser(context: Context, private val onOffer: (Offer) -> Unit, private va
             })();
         """.trimIndent()
         view.evaluateJavascript(js) { result ->
+            if (destroyed || expectedGen != navGen) return@evaluateJavascript
             runCatching {
                 val arr = JSONArray(JSONArray("[$result]").getString(0))
                 for (i in 0 until arr.length()) {
@@ -182,8 +259,9 @@ class Browser(context: Context, private val onOffer: (Offer) -> Unit, private va
                     val u = e.getString(0)
                     val kind = e.getString(1)
                     val label = e.getString(2).ifEmpty { null }
-                    val ok = if (kind == "Link") Media.looksDownloadable(u) else Links.isWebLink(u) && !Media.isStream(u)
-                    if (ok) addFound(Found(u, FileNames.fromUrl(u), if (kind == "Link") kindOf(u) else kind, if (kind == "Link") null else label))
+                    if (BrowserRules.acceptScanItem(u, kind)) {
+                        addFound(Found(u, FileNames.fromUrl(u), if (kind == "Link") kindOf(u) else kind, if (kind == "Link") null else label))
+                    }
                 }
             }
         }
@@ -196,8 +274,18 @@ class Browser(context: Context, private val onOffer: (Offer) -> Unit, private va
 
     /** Loads an address, or searches for the words typed. */
     fun go(input: String) {
+        if (destroyed) return
         val text = input.trim()
         if (text.isEmpty()) return
+        when (BrowserRules.classifyNavigation(text)) {
+            BrowserRules.LinkAction.MAGNET -> { onTorrent(text); return }
+            BrowserRules.LinkAction.NEXONIC -> {
+                val links = Links.fromNexonicLink(text)
+                if (links.isNotEmpty()) onNexonic(links)
+                return
+            }
+            else -> {}
+        }
         val target = when {
             Links.isWebLink(text) -> text
             !text.contains(' ') && text.contains('.') && !text.contains("://") -> "https://$text"
@@ -208,28 +296,65 @@ class Browser(context: Context, private val onOffer: (Offer) -> Unit, private va
     }
 
     fun startIfNeeded() {
-        if (!started) { started = true; view.loadUrl(Downloads.settings.homePage) }
+        if (!started && !destroyed) { started = true; view.loadUrl(Downloads.settings.homePage) }
     }
 
-    fun back() { if (view.canGoBack()) view.goBack() }
-    fun forward() { if (view.canGoForward()) view.goForward() }
-    fun reload() = view.reload()
-    fun stop() = view.stopLoading()
+    fun back() { if (!destroyed && view.canGoBack()) view.goBack() }
+    fun forward() { if (!destroyed && view.canGoForward()) view.goForward() }
+    fun reload() { if (!destroyed) view.reload() }
+    fun stop() { if (!destroyed) view.stopLoading() }
+    fun pause() { if (!destroyed) view.onPause() }
+    fun resume() { if (!destroyed) view.onResume() }
+
+    fun saveState(outState: Bundle) { if (!destroyed) view.saveState(outState) }
+
+    fun restoreState(savedState: Bundle): Boolean {
+        if (destroyed) return false
+        val restored = view.restoreState(savedState) != null
+        if (restored) {
+            started = true
+            url.value = view.url.orEmpty()
+            title.value = view.title.orEmpty()
+            updateNav()
+        }
+        return restored
+    }
+
+    fun destroy() {
+        if (destroyed) return
+        destroyed = true
+        main.removeCallbacksAndMessages(null)
+        view.stopLoading()
+        view.destroy()
+    }
 
     fun applyPrivacy() {
-        CookieManager.getInstance().setAcceptThirdPartyCookies(view, !Downloads.settings.blockThirdPartyCookies)
+        if (!destroyed) CookieManager.getInstance().setAcceptThirdPartyCookies(view, !Downloads.settings.blockThirdPartyCookies)
     }
 
-    /** Clears cookies, site data, cache and history. */
+    /** Clears cookies, site data, cache and history, and tears down the currently loaded page. */
     fun clearData() {
+        navGen++
+        lastPageKey = ""
+        started = false
+        found.value = emptyList()
+        title.value = ""
+        url.value = ""
+        main.removeCallbacksAndMessages(null)
+        if (!destroyed) {
+            view.stopLoading()
+            view.loadUrl("about:blank")
+        }
         CookieManager.getInstance().removeAllCookies(null)
         CookieManager.getInstance().flush()
         WebStorage.getInstance().deleteAllData()
-        view.clearCache(true)
-        view.clearHistory()
-        view.clearFormData()
-        found.value = emptyList()
-        updateNav()
+        if (!destroyed) {
+            view.clearCache(true)
+            view.clearHistory()
+            view.clearFormData()
+        }
+        canBack.value = false
+        canForward.value = false
     }
 
     fun host(): String = runCatching { Uri.parse(url.value).host.orEmpty() }.getOrDefault("")

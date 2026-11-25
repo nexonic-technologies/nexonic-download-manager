@@ -38,9 +38,7 @@ class DownloadService : Service() {
                 stopForegroundCompat(); stopSelf(); return
             }
             NexonicWidget.refresh(this@DownloadService, force = false)
-            NotificationManagerCompat.from(this@DownloadService).let {
-                if (canNotify(this@DownloadService)) it.notify(Notifier.ONGOING_ID, Notifier.ongoing(this@DownloadService))
-            }
+            Notifier.notifySafely(this@DownloadService, Notifier.ONGOING_ID, Notifier.ongoing(this@DownloadService))
             handler.postDelayed(this, 1000)
         }
     }
@@ -57,11 +55,7 @@ class DownloadService : Service() {
             Downloads.pauseAll()
         }
         val n = Notifier.ongoing(this)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(Notifier.ONGOING_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-        } else {
-            startForeground(Notifier.ONGOING_ID, n)
-        }
+        startForeground(Notifier.ONGOING_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         handler.removeCallbacks(tick)
         handler.post(tick)
         return START_NOT_STICKY
@@ -179,6 +173,13 @@ object Notifier {
             .build()
     }
 
+    internal fun notifySafely(context: Context, id: Int, n: Notification) {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) return
+        runCatching { NotificationManagerCompat.from(context).notify(id, n) }
+    }
+
     fun finished(context: Context, item: DownloadItem) {
         if (!canNotify(context) || !Downloads.settings.notifyFinished) return
         val open = item.contentUri?.let { uri ->
@@ -195,7 +196,7 @@ object Notifier {
             .setContentIntent(open)
             .setAutoCancel(true)
             .build()
-        runCatching { NotificationManagerCompat.from(context).notify(item.id.toInt(), n) }
+        notifySafely(context, item.id.toInt(), n)
     }
 
     fun failed(context: Context, item: DownloadItem) {
@@ -208,7 +209,7 @@ object Notifier {
             .setContentIntent(openApp(context, item.id))
             .setAutoCancel(true)
             .build()
-        runCatching { NotificationManagerCompat.from(context).notify(item.id.toInt(), n) }
+        notifySafely(context, item.id.toInt(), n)
     }
 
     fun scheduledReady(context: Context) {
@@ -221,7 +222,7 @@ object Notifier {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
             .setAutoCancel(true)
             .build()
-        runCatching { NotificationManagerCompat.from(context).notify(7, n) }
+        notifySafely(context, 7, n)
     }
 
     /** A short notice, such as "Download limit reached". */
@@ -234,7 +235,7 @@ object Notifier {
             .setContentIntent(openApp(context))
             .setAutoCancel(true)
             .build()
-        runCatching { NotificationManagerCompat.from(context).notify(8, n) }
+        notifySafely(context, 8, n)
     }
 }
 

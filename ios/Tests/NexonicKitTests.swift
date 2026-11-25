@@ -74,4 +74,20 @@ final class NexonicKitTests: XCTestCase {
         XCTAssertEqual(try BatchPattern.expand("f[1-3].jpg"), ["f1.jpg", "f2.jpg", "f3.jpg"])
         XCTAssertEqual(Media.qualityLabel(URL(string: "https://x.com/a-1080p.mp4")!), "1080p")
     }
+
+    func testProbeRequestKeepsCookiesAndSameSiteReferer() {
+        let target = URL(string: "https://example.com/private/file.zip")!
+        let sameSiteRef = URL(string: "https://example.com/downloads")!
+        let foreignRef = URL(string: "https://other.com/page")!
+
+        let same = Probe.makeRequest(url: target, referer: sameSiteRef, userAgent: "NexonicBrowser", cookies: "sid=abc", range: "bytes=0-0")
+        XCTAssertEqual(same.value(forHTTPHeaderField: "Cookie"), "sid=abc")
+        XCTAssertEqual(same.value(forHTTPHeaderField: "Referer"), sameSiteRef.absoluteString)
+        XCTAssertEqual(same.value(forHTTPHeaderField: "User-Agent"), "NexonicBrowser")
+        XCTAssertEqual(same.value(forHTTPHeaderField: "Range"), "bytes=0-0")
+
+        let cross = Probe.makeRequest(url: target, referer: foreignRef, userAgent: nil, cookies: nil, range: "bytes=0-0")
+        XCTAssertNil(cross.value(forHTTPHeaderField: "Referer"))
+        XCTAssertNil(cross.value(forHTTPHeaderField: "Cookie"))
+    }
 }

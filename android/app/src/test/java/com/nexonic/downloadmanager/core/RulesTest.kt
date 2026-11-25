@@ -105,6 +105,11 @@ class RulesTest {
         assertFalse(Media.isMedia("https://v.com/a.m3u8", "application/vnd.apple.mpegurl", -1))
         assertFalse(Media.isMedia("https://v.com/a.mp4", "video/mp4", 1000))
         assertFalse(Media.isMedia("blob:https://v.com/1", "video/mp4", -1))
+        assertTrue(Media.isStream("https://v.com/master.m3u8"))
+        assertTrue(Media.isStream("https://v.com/manifest.mpd?t=1"))
+        assertTrue(Media.isStream("https://v.com/chunk.m4s"))
+        assertTrue(Media.isStream("https://v.com/seg.ts"))
+        assertFalse(Media.isStream("https://v.com/video.mp4"))
         assertTrue(Media.looksDownloadable("https://x.com/setup.apk?x=1"))
         assertFalse(Media.looksDownloadable("https://x.com/page.html"))
     }

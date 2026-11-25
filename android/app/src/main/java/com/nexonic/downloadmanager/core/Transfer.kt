@@ -250,8 +250,14 @@ class Transfer(
 
     private fun launch(seg: Segment) {
         val g = gen
-        synchronized(lock) { running.add(seg.id) }
-        pool?.execute { runSegment(seg, g) }
+        val executor = synchronized(lock) {
+            val p = pool ?: return
+            running.add(seg.id)
+            p
+        }
+        runCatching { executor.execute { runSegment(seg, g) } }.onFailure {
+            synchronized(lock) { running.remove(seg.id) }
+        }
     }
 
     private fun runSegment(seg: Segment, g: Int) {
@@ -287,16 +293,23 @@ class Transfer(
                     val n = input.read(buf)
                     if (n < 0) break
                     val w = synchronized(lock) {
-                        val pos = seg.start + seg.written
-                        val allowed = if (seg.end < 0) Long.MAX_VALUE else seg.end - pos + 1
-                        val w = minOf(n.toLong(), allowed).toInt()
-                        if (w > 0) {
-                            raf!!.seek(pos)
-                            raf!!.write(buf, 0, w)
-                            seg.written += w
+                        val handle = raf
+                        if (!alive(g) || handle == null) {
+                            finished = true
+                            0
+                        } else {
+                            val pos = seg.start + seg.written
+                            val limitEnd = if (seg.end >= 0) seg.end else (state.size?.let { it - 1 } ?: -1L)
+                            val allowed = if (limitEnd < 0) Long.MAX_VALUE else maxOf(0L, limitEnd - pos + 1)
+                            val count = minOf(n.toLong(), allowed).toInt()
+                            if (count > 0) {
+                                handle.seek(pos)
+                                handle.write(buf, 0, count)
+                                seg.written += count
+                            }
+                            if (allowed <= n) finished = true
+                            count
                         }
-                        if (allowed <= n) finished = true
-                        w
                     }
                     if (w > 0) { total.addAndGet(w.toLong()); governor.received(w.toLong()); progressed = true; attempts = 0; limiter.take(w) }
                     if (finished) break
@@ -375,7 +388,8 @@ class Transfer(
     private fun fileChanged() {
         if (!stopped.compareAndSet(false, true)) return
         gen++
-        closeAll()
+        val oldPool = closeAll()
+        runCatching { oldPool?.awaitTermination(500, java.util.concurrent.TimeUnit.MILLISECONDS) }
         Thread.interrupted()
         synchronized(lock) { state = TransferState() }
         file.delete()
@@ -391,11 +405,11 @@ class Transfer(
         listener.failed(message, snapshot())
     }
 
-    private fun closeAll() {
+    private fun closeAll(): ExecutorService? {
         val conns = synchronized(lock) { open.toList().also { open.clear() } }
         conns.forEach { runCatching { it.disconnect() } }
-        pool?.shutdownNow()
-        pool = null
+        val oldPool = synchronized(lock) { pool.also { pool = null } }
+        oldPool?.shutdownNow()
         ticker?.interrupt()
         synchronized(lock) {
             runCatching { raf?.fd?.sync() }
@@ -404,6 +418,7 @@ class Transfer(
             running.clear()
         }
         listener.checkpoint(snapshot())
+        return oldPool
     }
 
     private fun startTicker() {

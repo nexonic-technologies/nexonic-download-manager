@@ -39,6 +39,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -66,7 +67,7 @@ fun SettingsScreen(browser: Browser, message: (String) -> Unit) {
     var folders by remember { mutableStateOf(s.categoryFolders) }
     var subtitles by remember { mutableStateOf(s.videoSubtitles) }
     var schedule by remember { mutableStateOf(s.scheduleEnabled) }
-    var minutes by remember { mutableStateOf(s.scheduleMinutes) }
+    var minutes by remember { mutableIntStateOf(s.scheduleMinutes) }
     var pickTime by remember { mutableStateOf(false) }
     var showLicenses by remember { mutableStateOf(false) }
     var block3p by remember { mutableStateOf(s.blockThirdPartyCookies) }
@@ -416,8 +417,20 @@ fun SettingsScreen(browser: Browser, message: (String) -> Unit) {
                 },
                 confirmButton = { TextButton(onClick = { pickEngine = false }) { Text(tr("Close")) } },
             )
-            OutlinedTextField(home, { home = it; if (com.nexonic.downloadmanager.core.Links.isWebLink(it)) s.homePage = it },
-                label = { Text(tr("Home page")) }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp))
+            val homeInvalid = home.isNotBlank() && !com.nexonic.downloadmanager.core.Links.isWebLink(home.trim())
+            OutlinedTextField(
+                value = home,
+                onValueChange = {
+                    home = it
+                    val trimmed = it.trim()
+                    if (com.nexonic.downloadmanager.core.Links.isWebLink(trimmed)) s.homePage = trimmed
+                },
+                label = { Text(tr("Home page")) },
+                isError = homeInvalid,
+                supportingText = if (homeInvalid) ({ Text(tr("No web link found. Links start with http:// or https://")) }) else null,
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+            )
             TextButton(onClick = { browser.clearData(); message("Browser data cleared") }) { Text(tr("Clear cookies, cache and history")) }
             TextButton(onClick = { confirmClear = true }) { Text(tr("Clear finished downloads from the list")) }
             Hint("No account, no ads, no tracking. Cookies and passwords for downloads are encrypted on this phone and sent only to their own site.")
