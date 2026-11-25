@@ -117,9 +117,9 @@ public class DisplayAndDataTests
     public void DataFolderMovesSafelyAndBack()
     {
         var root = Directory.CreateTempSubdirectory("ndm-data-").FullName;
+        var usual = Path.Combine(root, "usual");
         try
         {
-            var usual = Path.Combine(root, "usual");
             var other = Path.Combine(root, "big drive", "NDM data");
             Directory.CreateDirectory(Path.Combine(usual, "Parts", "abc"));
             File.WriteAllText(Path.Combine(usual, "settings.json"), "{\"a\":1}");
