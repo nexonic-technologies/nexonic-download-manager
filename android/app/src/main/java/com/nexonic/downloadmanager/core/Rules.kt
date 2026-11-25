@@ -286,7 +286,7 @@ object Media {
     /** A link that most likely is a file download rather than a page. */
     fun looksDownloadable(url: String): Boolean = Links.isWebLink(url) && FileNames.extensionOf(url) in DOWNLOADABLE
 
-    fun isStream(url: String): Boolean = FileNames.extensionOf(url) == "m3u8"
+    fun isStream(url: String): Boolean = FileNames.extensionOf(url) in STREAM_TYPES
 }
 
 object Format {

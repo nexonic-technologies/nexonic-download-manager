@@ -73,9 +73,12 @@ object VideoEngine {
      * Cookies of the built-in browser for this site, as a cookies file for yt-dlp. Sites like Instagram and Facebook
      * often show videos only to signed-in people: signing in once in the Browser tab is then enough.
      */
-    private fun cookiesFile(url: String): File? = runCatching {
+    private fun cookiesFile(url: String, explicitCookies: String? = null, originUrl: String? = null): File? = runCatching {
         val host = java.net.URI(url).host ?: return null
-        val header = CookieManager.getInstance().getCookie(url)?.takeIf { it.isNotBlank() } ?: return null
+        val sameOrigin = originUrl == null || com.nexonic.downloadmanager.core.Net.sameSite(url, originUrl)
+        val header = explicitCookies?.takeIf { sameOrigin && it.isNotBlank() }
+            ?: CookieManager.getInstance().getCookie(url)?.takeIf { it.isNotBlank() }
+            ?: return null
         val domain = "." + host.lowercase().removePrefix("www.").removePrefix("m.")
         val lines = VideoPages.netscapeCookies(domain, header)
         if (lines.isEmpty()) return null
@@ -88,9 +91,9 @@ object VideoEngine {
         }
     }.getOrNull()
 
-    /** Runs [block] with the browser's cookies for [url] in a file of its own (null: none), deleted afterwards. */
-    private inline fun <T> withCookies(url: String, block: (File?) -> T): T {
-        val file = cookiesFile(url)
+    /** Runs [block] with cookies for [url] in a file of its own (null: none), deleted afterwards. */
+    private inline fun <T> withCookies(url: String, explicitCookies: String? = null, originUrl: String? = null, block: (File?) -> T): T {
+        val file = cookiesFile(url, explicitCookies, originUrl)
         try { return block(file) } finally { file?.delete() }
     }
 
@@ -111,11 +114,14 @@ object VideoEngine {
     }
 
     /** Reads the page: title and quality choices. Throws [VideoException] with a readable message. */
-    fun read(url: String, userAgent: String? = null, referer: String? = null): VideoPage {
+    fun read(url: String, userAgent: String? = null, referer: String? = null, cookies: String? = null): VideoPage {
         ensure()
         val target = resolve(url)
+        val sameOrigin = com.nexonic.downloadmanager.core.Net.sameSite(target, url)
         val info = try {
-            withCookies(target) { YoutubeDL.getInstance().getInfo(base(target, userAgent, referer, it)) }
+            withCookies(target, cookies, url) {
+                YoutubeDL.getInstance().getInfo(base(target, userAgent, referer.takeIf { sameOrigin }, it))
+            }
         } catch (e: Exception) {
             Log.w(TAG, "read failed", e)
             throw VideoException(VideoPages.friendlyError(e.message))
@@ -141,12 +147,14 @@ object VideoEngine {
      * yt-dlp keeps its .part files, so a paused download continues where it stopped.
      */
     fun download(id: String, url: String, choice: VideoChoice, dir: File, rateKB: Long, userAgent: String?, referer: String?,
-                 subtitles: Boolean = false, audioFormat: String = "original", progress: (Float, Long, Long?, Long?) -> Unit): File {
+                 subtitles: Boolean = false, audioFormat: String = "original", explicitCookies: String? = null,
+                 progress: (Float, Long, Long?, Long?) -> Unit): File {
         ensure()
         dir.mkdirs()
         val target = resolve(url)
-        val cookies = cookiesFile(target)
-        val req = base(target, userAgent, referer, cookies).apply {
+        val sameOrigin = com.nexonic.downloadmanager.core.Net.sameSite(target, url)
+        val cookies = cookiesFile(target, explicitCookies, url)
+        val req = base(target, userAgent, referer.takeIf { sameOrigin }, cookies).apply {
             addOption("-f", choice.selector)
             // Sites whose videos all have the same title ("Video by name"): named after the caption, with the video's id
             // so two videos never share a name (the engine would skip the second as "already downloaded").
@@ -307,6 +315,7 @@ class VideoJob(
     private val rateKB: Long,
     private val userAgent: String?,
     private val referer: String?,
+    private val cookies: String? = null,
     /** Percent, seconds left, total bytes and bytes per second (when yt-dlp reports them). */
     private val onProgress: (Float, Long, Long?, Long?) -> Unit,
     private val onDone: (File) -> Unit,
@@ -319,7 +328,8 @@ class VideoJob(
             try {
                 val file = VideoEngine.download(id.toString(), url, choice, dir, rateKB, userAgent, referer,
                     com.nexonic.downloadmanager.data.Downloads.settings.videoSubtitles,
-                    com.nexonic.downloadmanager.data.Downloads.settings.audioFormat) { p, eta, total, speed ->
+                    com.nexonic.downloadmanager.data.Downloads.settings.audioFormat,
+                    cookies) { p, eta, total, speed ->
                     if (!stopped.get()) onProgress(p, eta, total, speed)
                 }
                 if (!stopped.get()) onDone(file)

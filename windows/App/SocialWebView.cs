@@ -48,10 +48,24 @@ static class SocialWebView
         return String(document.documentElement.scrollHeight); })()
         """;
 
+    static void CleanOldTemp()
+    {
+        try
+        {
+            var cutoff = DateTime.UtcNow.AddHours(-2);
+            foreach (var dir in Directory.GetDirectories(Path.GetTempPath(), "nexonic-page-*"))
+            {
+                try { if (Directory.GetCreationTimeUtc(dir) < cutoff) Directory.Delete(dir, true); } catch { }
+            }
+        }
+        catch { }
+    }
+
     public static async Task<ProfileBatch.Scan> Scan(string url, SocialSite site, string owner, string[] pages, int max, Action<int> found,
         CancellationToken cancel, string? cookies = null, string? userAgent = null, List<BatchEntry>? seed = null)
     {
         RequireRuntime();
+        CleanOldTemp();
         var temp = Path.Combine(Path.GetTempPath(), "nexonic-page-" + Guid.NewGuid().ToString("N"));
         var window = new Window
         {
@@ -118,7 +132,11 @@ static class SocialWebView
         {
             window.Close();
             view?.Dispose();
-            try { Directory.Delete(temp, true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            for (int attempt = 0; attempt < 10; attempt++)
+            {
+                try { if (Directory.Exists(temp)) Directory.Delete(temp, true); break; }
+                catch (Exception x) when (x is IOException or UnauthorizedAccessException) { await Task.Delay(150); }
+            }
         }
     }
 }

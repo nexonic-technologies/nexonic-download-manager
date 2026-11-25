@@ -7,9 +7,10 @@ public struct DownloadInput: Identifiable, Sendable {
     public var referer: URL?
     public var userAgent: String?
     public var suggestedName: String?
+    public var cookies: String?
 
-    public init(urls: [URL], referer: URL? = nil, userAgent: String? = nil, suggestedName: String? = nil) {
-        self.urls = urls; self.referer = referer; self.userAgent = userAgent; self.suggestedName = suggestedName
+    public init(urls: [URL], referer: URL? = nil, userAgent: String? = nil, suggestedName: String? = nil, cookies: String? = nil) {
+        self.urls = urls; self.referer = referer; self.userAgent = userAgent; self.suggestedName = suggestedName; self.cookies = cookies
     }
 }
 
@@ -96,7 +97,7 @@ public struct DownloadWindow: View {
                 .padding()
                 .background(.bar)
             }
-            .task { await load() }
+            .task(id: input.id) { await load() }
             .onChange(of: choice) { _, c in
                 guard let c else { return }
                 Task { await probeChoice(c.url) }
@@ -114,13 +115,15 @@ public struct DownloadWindow: View {
     }
 
     private func load() async {
+        probing = true; probe = nil; choices = []; choice = nil; problem = nil; nothingFound = false; nameEdited = false
         guard let single else { probing = false; return }
-        if let s = input.suggestedName, !s.isEmpty { name = FileNames.sanitize(s) }
+        if let s = input.suggestedName, !s.isEmpty { name = FileNames.sanitize(s) } else { name = "" }
         do {
-            let p = try await Probe.run(single)
+            let p = try await Probe.run(single, referer: input.referer, userAgent: input.userAgent, cookies: input.cookies)
             if p.isPage {
                 // A web page: offer the videos and files on it.
-                let found = await Probe.scan(page: p.finalURL)
+                let pageCookies = Net.sameSite(p.finalURL, single) ? input.cookies : nil
+                let found = await Probe.scan(page: p.finalURL, referer: input.referer, userAgent: input.userAgent, cookies: pageCookies)
                 choices = found
                 if found.isEmpty { nothingFound = true; probing = false; return }
                 choice = found[0] // probes it through onChange
@@ -137,7 +140,13 @@ public struct DownloadWindow: View {
     private func probeChoice(_ url: URL) async {
         probing = true
         nameEdited = false
-        if let p = try? await Probe.run(url) { apply(p) } else { name = FileNames.fromURL(url); probing = false }
+        let ref = single ?? input.referer
+        let same = single.map { Net.sameSite(url, $0) } ?? false
+        if let p = try? await Probe.run(url, referer: ref, userAgent: input.userAgent, cookies: same ? input.cookies : nil) {
+            apply(p)
+        } else {
+            name = FileNames.fromURL(url); probing = false
+        }
     }
 
     private func apply(_ p: ProbeResult) {

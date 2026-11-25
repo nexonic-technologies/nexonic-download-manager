@@ -173,3 +173,31 @@ object VideoPages {
         }
     }
 }
+
+/** Tracks monotonic downloaded bytes across multi-stream video and audio downloads without resetting progress or double-counting data limits. */
+class VideoProgressTracker(initialWritten: Long = 0L) {
+    private var completedBytes = 0L
+    private var streamMax = 0L
+    private var lastPercent = -1f
+    var maxWritten: Long = initialWritten
+        private set
+    var totalEstimate: Long? = null
+        private set
+
+    fun update(percent: Float, passTotal: Long?): Pair<Long, Long?> {
+        val cleanTotal = passTotal?.takeIf { it > 0 }
+        if (lastPercent >= 0f && percent + 5f < lastPercent && streamMax > 0L) {
+            completedBytes += streamMax
+            streamMax = 0L
+        }
+        if (percent >= 0f) lastPercent = percent
+        val passWritten = if (cleanTotal != null) (cleanTotal * percent.coerceIn(0f, 100f) / 100f).toLong() else 0L
+        if (passWritten > streamMax) streamMax = passWritten
+        maxWritten = maxOf(maxWritten, completedBytes + streamMax)
+        if (cleanTotal != null) {
+            val est = completedBytes + cleanTotal
+            totalEstimate = maxOf(totalEstimate ?: 0L, est).takeIf { it > 0 }
+        }
+        return maxWritten to totalEstimate
+    }
+}

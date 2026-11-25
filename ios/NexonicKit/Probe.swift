@@ -24,8 +24,29 @@ public struct ServerError: LocalizedError, Sendable {
     public var errorDescription: String? { Downloader.message(status: status) }
 }
 
-/// Never sends cookies or logins: it only asks for the name, size and type.
+/// Sends only caller-provided browser headers/cookies and strips them on cross-origin redirects.
 public enum Probe {
+    private final class RedirectGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+        let origin: URL
+        init(origin: URL) { self.origin = origin }
+
+        func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                        newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+            guard let next = request.url, let scheme = next.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
+                completionHandler(nil); return
+            }
+            if !Net.sameSite(next, origin) {
+                var stripped = request
+                stripped.setValue(nil, forHTTPHeaderField: "Cookie")
+                stripped.setValue(nil, forHTTPHeaderField: "Referer")
+                stripped.setValue(nil, forHTTPHeaderField: "Authorization")
+                completionHandler(stripped)
+                return
+            }
+            completionHandler(request)
+        }
+    }
+
     static let session: URLSession = {
         let c = URLSessionConfiguration.ephemeral
         c.timeoutIntervalForRequest = 20
@@ -33,11 +54,20 @@ public enum Probe {
         return URLSession(configuration: c)
     }()
 
-    /// Asks for the first byte only: name, size, type and whether the server can resume.
-    public static func run(_ url: URL) async throws -> ProbeResult {
+    static func makeRequest(url: URL, referer: URL? = nil, userAgent: String? = nil, cookies: String? = nil, range: String? = nil) -> URLRequest {
         var req = URLRequest(url: url)
-        req.setValue("bytes=0-0", forHTTPHeaderField: "Range")
-        let (bytes, response) = try await session.bytes(for: req)
+        if let range { req.setValue(range, forHTTPHeaderField: "Range") }
+        if let ua = userAgent, !ua.isEmpty { req.setValue(ua, forHTTPHeaderField: "User-Agent") }
+        if let r = referer, Net.sameSite(url, r) { req.setValue(r.absoluteString, forHTTPHeaderField: "Referer") }
+        if let cookies, !cookies.isEmpty { req.setValue(cookies, forHTTPHeaderField: "Cookie") }
+        return req
+    }
+
+    /// Asks for the first byte only: name, size, type and whether the server can resume.
+    public static func run(_ url: URL, referer: URL? = nil, userAgent: String? = nil, cookies: String? = nil) async throws -> ProbeResult {
+        let req = makeRequest(url: url, referer: referer, userAgent: userAgent, cookies: cookies, range: "bytes=0-0")
+        let guardDelegate = (cookies?.isEmpty == false || referer != nil) ? RedirectGuard(origin: url) : nil
+        let (bytes, response) = try await session.bytes(for: req, delegate: guardDelegate)
         bytes.task.cancel()
         guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
         guard http.statusCode < 400 else { throw ServerError(status: http.statusCode) }
@@ -58,9 +88,11 @@ public enum Probe {
     }
 
     /// Videos, music and files on a web page: <video>/<audio>/<source>, og:video and links to files.
-    /// Streams (.m3u8) and copy-protected video are not offered.
-    public static func scan(page: URL) async -> [MediaChoice] {
-        guard let result = try? await session.bytes(from: page) else { return [] }
+    /// Streams (.m3u8, .mpd, .ts, .m4s) and copy-protected video are not offered.
+    public static func scan(page: URL, referer: URL? = nil, userAgent: String? = nil, cookies: String? = nil) async -> [MediaChoice] {
+        let req = makeRequest(url: page, referer: referer, userAgent: userAgent, cookies: cookies)
+        let guardDelegate = (cookies?.isEmpty == false || referer != nil) ? RedirectGuard(origin: page) : nil
+        guard let result = try? await session.bytes(for: req, delegate: guardDelegate) else { return [] }
         let bytes = result.0
         var data = Data()
         do {

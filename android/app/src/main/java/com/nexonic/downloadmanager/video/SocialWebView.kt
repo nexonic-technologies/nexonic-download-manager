@@ -3,6 +3,7 @@ package com.nexonic.downloadmanager.video
 import android.annotation.SuppressLint
 import android.content.Context
 import android.view.View
+import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.webkit.ProfileStore
@@ -35,20 +36,33 @@ object SocialWebView {
     @SuppressLint("SetJavaScriptEnabled")
     private fun webView(context: Context) = WebView(context).apply {
         // Before anything else touches the view: its profile can't change once it has loaded a page.
-        WebViewCompat.setProfile(this, PROFILE)
-        ProfileStore.getInstance().getOrCreateProfile(PROFILE).cookieManager.setAcceptThirdPartyCookies(this, false)
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
+            WebViewCompat.setProfile(this, PROFILE)
+            ProfileStore.getInstance().getOrCreateProfile(PROFILE).cookieManager.setAcceptThirdPartyCookies(this, false)
+        } else {
+            throw IllegalStateException("WebView MULTI_PROFILE is not supported")
+        }
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
-        webViewClient = WebViewClient()
+        settings.allowFileAccess = false
+        settings.allowContentAccess = false
+        webViewClient = object : WebViewClient() {
+            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                val scheme = request.url.scheme?.lowercase()
+                return scheme != "http" && scheme != "https"
+            }
+        }
     }
 
     /** What the visitor's page left behind (cookies, storage, cache): gone, so the next scan starts as a new visitor. */
     private fun forget(view: WebView) {
         runCatching {
-            val p = ProfileStore.getInstance().getOrCreateProfile(PROFILE)
-            p.cookieManager.removeAllCookies(null)
-            p.cookieManager.flush()
-            p.webStorage.deleteAllData()
+            if (WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
+                val p = ProfileStore.getInstance().getOrCreateProfile(PROFILE)
+                p.cookieManager.removeAllCookies(null)
+                p.cookieManager.flush()
+                p.webStorage.deleteAllData()
+            }
             view.clearCache(true)
         }
     }
@@ -79,7 +93,7 @@ object SocialWebView {
                         val now = InstagramPage.read(run(view, site.script))
                         posts = maxOf(posts, now.first)
                         val grew = SocialPages.merge(all, now.second, max)
-                        idle = if (grew || (all.isEmpty() && i < 10)) 0 else idle + 1
+                        idle = if (grew || i < 6) 0 else idle + 1
                         if (grew) found(all.size)
                     }
                 }

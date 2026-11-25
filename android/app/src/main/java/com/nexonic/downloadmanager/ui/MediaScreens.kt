@@ -116,6 +116,10 @@ fun ProfileBatchSheet(link: String, onDismiss: () -> Unit, message: (String) -> 
     var preview by remember { mutableStateOf(listOf<com.nexonic.downloadmanager.core.BatchEntry>()) }
     var chosen by remember { mutableStateOf(setOf<String>()) }
     val stopId = remember { "scan-" + System.nanoTime() }
+    var scanJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose { scanJob?.cancel(); VideoEngine.cancel(stopId) }
+    }
     var exportFormat by remember { mutableStateOf("txt") }
     val context = LocalContext.current
     val saveFile = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.CreateDocument("*/*")) { uri ->
@@ -168,31 +172,37 @@ fun ProfileBatchSheet(link: String, onDismiss: () -> Unit, message: (String) -> 
         val social = com.nexonic.downloadmanager.core.SocialPages.find(url)
         // The visitor's page is read only in a view kept apart from the browser's sign-in; without that, the engine's
         // cookie-free listing below is used.
+        scanJob?.cancel()
         if (social != null && com.nexonic.downloadmanager.video.SocialWebView.isolated()) {
             // Instagram and Facebook show their posts only through their own pages: open them like a visitor's browser.
             val (site, name, pages) = social
             val web = com.nexonic.downloadmanager.video.SocialWebView
             status = tr("Opening the profile like a visitor's browser…")
-            scope.launch {
-                val (posts, videos) = runCatching { web.scan(context, site, pages, f.max, { n -> status = tr("%d found so far…").format(n) }) { !busy } }
-                    .getOrDefault(0 to emptyList())
+            scanJob = scope.launch {
+                val res = runCatching { web.scan(context, site, pages, f.max, { n -> status = tr("%d found so far…").format(n) }) { !busy } }
                 busy = false
-                when {
-                    videos.isNotEmpty() -> show(videos, name, "${site.name}: " + tr("visitors who are not signed in see only the latest posts; Nexonic took the videos among them."))
-                    posts > 0 -> status = com.nexonic.downloadmanager.core.InstagramPage.noVideos(posts)
-                    else -> status = "${site.name}: " + tr("no videos were shown to a visitor who is not signed in (the profile may be private or not exist).")
+                res.onSuccess { (posts, videos) ->
+                    when {
+                        videos.isNotEmpty() -> show(videos, name, "${site.name}: " + tr("visitors who are not signed in see only the latest posts; Nexonic took the videos among them."))
+                        posts > 0 -> status = com.nexonic.downloadmanager.core.InstagramPage.noVideos(posts)
+                        else -> status = "${site.name}: " + tr("no videos were shown to a visitor who is not signed in (the profile may be private or not exist).")
+                    }
+                }.onFailure { e ->
+                    status = if (e is kotlinx.coroutines.CancellationException) tr("Stopped.")
+                    else e.message ?: tr("The list of videos could not be read.")
                 }
             }
             return
         }
-        scope.launch {
+        scanJob = scope.launch {
             val r = withContext(Dispatchers.IO) {
                 runCatching { Downloads.discover(url, f.max, false, stopId) { n -> if (n > 0) scope.launch { status = tr("%d found so far…").format(n) } } }
             }
             busy = false
             r.onSuccess { (entries, name) -> show(entries, name, com.nexonic.downloadmanager.video.VideoEngine.lastNote) }
             r.onFailure {
-                status = if (it is com.yausername.youtubedl_android.YoutubeDL.CanceledException) tr("Stopped. The videos found so far are kept; Find videos continues from there.")
+                status = if (it is com.yausername.youtubedl_android.YoutubeDL.CanceledException || it is kotlinx.coroutines.CancellationException)
+                    tr("Stopped. The videos found so far are kept; Find videos continues from there.")
                 else it.message ?: tr("The list of videos could not be read.")
             }
         }
@@ -238,7 +248,7 @@ fun ProfileBatchSheet(link: String, onDismiss: () -> Unit, message: (String) -> 
                 if (found.isNotEmpty()) listOf("txt", "csv", "json").forEach { f ->
                     TextButton(onClick = { exportFormat = f; saveFile.launch((owner.ifEmpty { "videos" }) + "." + f) }) { Text(f.uppercase()) }
                 }
-                if (busy) TextButton(onClick = { VideoEngine.cancel(stopId) }) { Text(tr("Stop")) }
+                if (busy) TextButton(onClick = { busy = false; scanJob?.cancel(); VideoEngine.cancel(stopId) }) { Text(tr("Stop")) }
                 Button(onClick = { find() }, enabled = !busy) { Text(tr("Find videos")) }
             }
             if (preview.isNotEmpty() || pending.isNotEmpty()) Row(Modifier.fillMaxWidth().padding(bottom = 16.dp), horizontalArrangement = Arrangement.End) {

@@ -169,4 +169,18 @@ class TransferTest {
         val r = run(DownloadRequest("$base/missing"), File(dir, "h.bin"))
         assertTrue(r.error!!.contains("404"))
     }
+
+    @Test fun pauseDuringActiveWritesDoesNotThrow() {
+        delayMs = 20
+        val f = File(dir, "pause-race.bin")
+        repeat(3) {
+            val r = Result()
+            val t = Transfer(DownloadRequest("$base/file.bin"), f, 8, null, r)
+            t.start()
+            Thread.sleep(250)
+            t.pause()
+            assertTrue(r.pausedLatch.await(10, TimeUnit.SECONDS))
+            assertNull(r.error)
+        }
+    }
 }

@@ -210,5 +210,5 @@ jobs:
           node --check extension/content.js
       - name: Firefox add-on passes the linter
         run: npx --yes web-ext@8 lint --source-dir build/extension-firefox --warnings-as-errors=false
-      - name: No outside names
-        run: "! grep -rniE 'cl[a]ude|anthr[o]pic' --exclude-dir=.git --exclude-dir=.github ."
+      - name: No outside names or AI co-authors
+        run: python3 scripts/check-attribution.py

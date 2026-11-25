@@ -163,7 +163,7 @@ object Downloads {
                         }
                         update(id) {
                             it.copy(status = Status.COMPLETE, written = info.selectedSize, size = info.selectedSize, speed = 0,
-                                fileName = if (files.size == 1) first!!.name else it.fileName,
+                                fileName = if (files.size == 1) (first?.name ?: it.fileName) else it.fileName,
                                 contentUri = first?.uri?.toString(), savedPath = first?.path, finishedAt = System.currentTimeMillis(), error = null)
                         }
                         folder.deleteRecursively(); torrentState(id).deleteRecursively()
@@ -250,14 +250,14 @@ object Downloads {
             id = id, url = d.url, fileName = name, size = d.size, resumable = d.resumable,
             referer = d.referer, userAgent = d.userAgent, quality = d.video?.label ?: d.quality,
             status = if (startNow) Status.QUEUED else Status.LATER,
-            videoFormat = d.video?.selector, videoExt = d.video?.ext,
+            videoFormat = d.video?.selector, videoExt = d.video?.ext, videoAudio = d.video?.audioOnly ?: false,
         )
         _items.value = listOf(item) + _items.value
         persist()
         if (startNow) pump()
         // Added before its page was read: find the video's title in the background and show it in the list.
         if (d.video != null && name == VideoPages.AUTO_NAME) Thread({
-            runCatching { VideoEngine.read(d.url, d.userAgent, d.referer) }.getOrNull()?.title?.let { title ->
+            runCatching { VideoEngine.read(d.url, d.userAgent, d.referer, d.secrets.cookies) }.getOrNull()?.title?.let { title ->
                 update(id) { if (it.fileName == VideoPages.AUTO_NAME && it.status != Status.COMPLETE) it.copy(fileName = VideoPages.fileName(title, it.videoExt ?: "mp4")) else it }
             }
         }, "nexonic-video-title").start()
@@ -550,22 +550,23 @@ object Downloads {
 
     private fun startVideo(item: DownloadItem) {
         val id = item.id
-        val choice = VideoChoice(item.quality ?: "", item.videoFormat!!, item.videoExt ?: "mp4", item.size, audioOnly = item.videoExt != "mp4")
+        val isAudio = item.videoAudio || (item.videoExt in setOf("m4a", "mp3", "opus", "flac", "aac", "ogg", "oga", "wav") && item.videoFormat?.startsWith("ba") == true)
+        val choice = VideoChoice(item.quality ?: "", item.videoFormat!!, item.videoExt ?: "mp4", item.size, audioOnly = isAudio)
+        val tracker = com.nexonic.downloadmanager.core.VideoProgressTracker(item.written)
         var lastBytes = item.written
         var lastTime = System.currentTimeMillis()
         val job = VideoJob(
-            id, item.url, choice, videoDir(id), settings.speedLimitKB, item.userAgent, item.referer,
+            id, item.url, choice, videoDir(id), settings.speedLimitKB, item.userAgent, item.referer, secrets.get(id).cookies,
             onProgress = { percent, _, total, speed ->
                 update(id, save = false) {
                     if (it.status != Status.DOWNLOADING) return@update it
-                    // yt-dlp reports the size of the part it is downloading (video, then sound) and its speed.
-                    val size = total?.takeIf { t -> t > 0 } ?: it.size
-                    val written = if (size != null && size > 0) (size * percent / 100).toLong() else it.written
+                    // Track cumulative progress across separate video/audio streams without resetting or double-counting data cap.
+                    val (written, estSize) = tracker.update(percent, total ?: it.size)
                     val now = System.currentTimeMillis()
                     val measured = if (now - lastTime >= 1000) ((written - lastBytes) * 1000 / (now - lastTime)).coerceAtLeast(0).also {
                         lastBytes = written; lastTime = now
                     } else it.speed
-                    it.copy(written = written, size = size, speed = speed ?: measured)
+                    it.copy(written = written, size = estSize ?: it.size, speed = speed ?: measured)
                 }
             },
             onDone = { file ->

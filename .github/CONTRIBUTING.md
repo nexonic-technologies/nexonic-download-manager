@@ -21,6 +21,11 @@ See [docs/TRANSLATIONS.md](../docs/TRANSLATIONS.md) and the open "Help wanted: r
 
 Contributions are licensed under MIT OR Apache-2.0, like the rest of the project (see [LICENSE](../LICENSE) and [LICENSE-APACHE](../LICENSE-APACHE)).
 
+## Attribution policy (Strict)
+
+- **No AI co-authors or AI contributors**: Never add any AI coding assistant, model, or agent (such as Codex, Claude, Antigravity, Copilot, Gemini, ChatGPT, or Cursor) as a `Co-Authored-By` trailer, git commit author/committer, or listed contributor in commits, pull requests, code comments, changelogs, manifests, or documentation.
+- All commits must carry only human authorship. Pull requests violating this rule are rejected by CI.
+
 ## Code of conduct
 
 Be kind and patient. Disagree with ideas, not with people.

@@ -37,6 +37,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -82,32 +83,34 @@ import kotlinx.coroutines.withContext
 fun AddDownloadSheet(given: Offer?, text: String?, onDone: (String?) -> Unit) {
     val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val context = LocalContext.current
-    var input by remember { mutableStateOf(given?.url ?: text.orEmpty()) }
-    var batch by remember { mutableStateOf(false) }
-    var keepOnly by remember { mutableStateOf("") }
-    var name by remember { mutableStateOf(given?.fileName.orEmpty()) }
-    var nameEdited by remember { mutableStateOf(false) }
-    var probe by remember { mutableStateOf<ProbeResult?>(null) }
-    var probing by remember { mutableStateOf(false) }
-    var problem by remember { mutableStateOf<String?>(null) }
-    var showLogin by remember { mutableStateOf(false) }
-    var user by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
+    var input by remember(given, text) { mutableStateOf(given?.url ?: text.orEmpty()) }
+    var batch by remember(given, text) { mutableStateOf(false) }
+    var keepOnly by remember(given, text) { mutableStateOf("") }
+    var name by remember(given, text) { mutableStateOf(given?.fileName.orEmpty()) }
+    var nameEdited by remember(given, text) { mutableStateOf(false) }
+    var probe by remember(given, text) { mutableStateOf<ProbeResult?>(null) }
+    var probing by remember(given, text) { mutableStateOf(false) }
+    var problem by remember(given, text) { mutableStateOf<String?>(null) }
+    var showLogin by remember(given, text) { mutableStateOf(false) }
+    var user by remember(given, text) { mutableStateOf("") }
+    var password by remember(given, text) { mutableStateOf("") }
     // Video pages (YouTube, Facebook, Instagram, TikTok…): the video engine reads the page instead of saving it.
-    var isVideo by remember { mutableStateOf(false) }
-    var reading by remember { mutableStateOf(false) }
-    var page by remember { mutableStateOf<VideoPage?>(null) }
-    var pick by remember { mutableStateOf(0) }
+    var isVideo by remember(given, text) { mutableStateOf(false) }
+    var reading by remember(given, text) { mutableStateOf(false) }
+    var page by remember(given, text) { mutableStateOf<VideoPage?>(null) }
+    var pick by remember(given, text) { mutableIntStateOf(0) }
 
     // A browser's "Copy as cURL" pasted here: one download with the command's referrer, cookies, browser name and login.
-    val curl = remember(input) { if (given == null && CurlCommand.looks(input)) CurlCommand.parse(input) else null }
+    val curl = remember(input, given) { if (given == null && CurlCommand.looks(input)) CurlCommand.parse(input) else null }
     val offer: Offer? = given ?: curl?.request?.let { Offer(url = it.url, referer = it.referrer, userAgent = it.userAgent, cookies = it.cookies) }
     LaunchedEffect(curl) {
         curl?.request?.let { c -> if (c.username != null) { user = c.username; password = c.password.orEmpty() } }
     }
 
-    val links: List<String> = remember(input, batch, curl, keepOnly) {
+    val links: List<String> = remember(input, batch, curl, keepOnly, given) {
         if (curl != null) return@remember listOfNotNull(curl.request?.url)
+        // Preserve a single Offer URL untouched so unwrap/comma splitting never strips its cookies or credentials.
+        if (given != null && !batch && input == given.url) return@remember listOfNotNull(given.url.takeIf { Links.isWebLink(it) })
         // Any pasted text works: when it is not just links, the links in it are found (Link Grabber).
         val l = if (batch) com.nexonic.downloadmanager.core.LinkFilter.apply(
                 Links.split(input).flatMap { BatchPattern.expand(it, 2000) }.filter { Links.isWebLink(it) }, keepOnly)
@@ -149,7 +152,9 @@ fun AddDownloadSheet(given: Offer?, text: String?, onDone: (String?) -> Unit) {
         }
         if (isVideo) {
             reading = true
-            val read = withContext(Dispatchers.IO) { runCatching { VideoEngine.read(single, offer?.userAgent, offer?.referer) } }
+            val read = withContext(Dispatchers.IO) {
+                runCatching { VideoEngine.read(single, offer?.userAgent, offer?.referer, offer?.cookies?.takeIf { single == offer.url }) }
+            }
             reading = false
             read.onSuccess { p ->
                 page = p

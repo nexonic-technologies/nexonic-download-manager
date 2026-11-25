@@ -8,7 +8,9 @@ import androidx.activity.compose.setContent
 import com.nexonic.downloadmanager.core.AppLanguage
 import com.nexonic.downloadmanager.core.Links
 import com.nexonic.downloadmanager.core.Playlists
+import com.nexonic.downloadmanager.core.tr
 import com.nexonic.downloadmanager.data.Downloads
+import com.nexonic.downloadmanager.torrent.TorrentPreview
 import com.nexonic.downloadmanager.ui.AddDownloadSheet
 import com.nexonic.downloadmanager.ui.NexonicTheme
 
@@ -25,7 +27,10 @@ class ShareActivity : ComponentActivity() {
         val text = listOfNotNull(intent.getStringExtra(Intent.EXTRA_TEXT), intent.getStringExtra(Intent.EXTRA_SUBJECT)).joinToString(" ")
         val links = Links.split(text)
         val single = links.singleOrNull()
-        val fullApp = !Downloads.settings.sharePopup || links.isEmpty() || text.contains("magnet:?", ignoreCase = true) ||
+        val isTorrent = text.contains("magnet:?", ignoreCase = true) ||
+            intent.type.equals("application/x-bittorrent", true) ||
+            (single != null && TorrentPreview.isTorrent(single))
+        val fullApp = !Downloads.settings.sharePopup || links.isEmpty() || isTorrent ||
             (single != null && Playlists.isPlaylist(single))
         if (fullApp) {
             startActivity(Intent(intent).setClass(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -35,7 +40,7 @@ class ShareActivity : ComponentActivity() {
         setContent {
             NexonicTheme {
                 AddDownloadSheet(given = null, text = links.joinToString("\n")) { message ->
-                    if (message != null) Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+                    if (message != null) Toast.makeText(this, tr(message), Toast.LENGTH_SHORT).show()
                     finish()
                 }
             }
