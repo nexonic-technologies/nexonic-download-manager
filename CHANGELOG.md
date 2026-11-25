@@ -1,3 +1,16 @@
+## 0.36.3
+
+- **Android: in-app browser & activity reliability.** Keeps browser navigation history and screen state across
+  app recreations (such as language or font changes), refreshes detected media across single-page app route
+  changes without leaking results between pages, preserves page cookies/referrer/user-agent when grabbing videos,
+  routes `magnet:`, `nexonic://`, and `.torrent` links to their matching sheets, clears active pages cleanly
+  on Clear Browser Data, and fixes multi-stream video progress tracking, pause races, and notification permission checks.
+- **iPhone and iPad: in-app browser probing & torrents.** Keeps same-site cookies and headers when probing downloads
+  from the built-in browser while stripping credentials on cross-origin redirects, routes `magnet:` and `.torrent`
+  links to the torrent window, updates detected media on single-page navigations, and clears active pages on reset.
+- **Windows:** sweeps stale temporary browser folders on startup and retries cleanup after WebView2 closes; fixes
+  cross-folder data-location caching when paths are checked concurrently.
+
 ## 0.36.2
 
 - **Now published by Nexonic Technologies.** The project has moved to
